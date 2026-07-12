@@ -46,8 +46,8 @@ With help from Claude the RV30C Mop is now supported using the **AES** authentic
 
 Should work on any Tapo RobovAC using AES / TPAP.
 
-## Sample script
-
+## Sample
+**Script**
 ```
 alias: Bonnie - Clean All Rooms
 sequence:
@@ -64,6 +64,32 @@ sequence:
         - Entrance
 mode: single
 description: Triggers the vacuum to clean all areas downstairs.
+```
+
+**Dashboard Button**
+```
+type: vertical-stack
+cards:
+  - square: false
+    type: grid
+    cards:
+      - type: custom:mushroom-template-card
+        primary: Bonnie
+        icon: mdi:robot-vacuum
+        tap_action:
+          action: perform-action
+          perform_action: script.clean_bathroom
+          target: {}
+        hold_action:
+          action: none
+        double_tap_action:
+          action: none
+        entity: script.clean_bathroom
+        color: green
+        features_position: bottom
+        multiline_secondary: true
+        secondary: All Rooms
+        vertical: true
 ```
 
 ## Credits
