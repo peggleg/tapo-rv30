@@ -5,7 +5,7 @@ Local-only Home Assistant integration for the **TP-Link Tapo RV30 Max Plus** rob
 Implements the **TPAP / SPAKE2+** authentication protocol reverse-engineered from [python-kasa PR #1592](https://github.com/python-kasa/python-kasa/pull/1592).
 No cloud dependency — communicates directly with the vacuum over your LAN.
 
-With help from Claude the RV30C Mop is now supported using the AES authentication protocol.
+With help from Claude the RV30C Mop is now supported using the **AES** authentication protocol.
 
 ## Features
 
