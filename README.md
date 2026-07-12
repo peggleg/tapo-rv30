@@ -29,14 +29,10 @@ With help from Claude the RV30C Mop is now supported using the **AES** authentic
 - Tapo RV30 or RV20 on firmware **1.2.x+** (AES / TPAP protocol)
 - Python packages (installed automatically by HACS): `requests`, `ecdsa`, `Pillow`
 
-## Installation via HACS
+## Installation
 
-1. In HACS → **Integrations** → ⋮ menu → **Custom repositories**
-2. Add `https://github.com/peggleg/tapo-rv30` as category **Integration**
-3. Install **Tapo RV30 Robot Vacuum**
-4. Restart Home Assistant
-5. **Settings → Devices & Services → + Add Integration → Tapo RV30**
-6. Enter your vacuum's IP address, Tapo account email, and password
+1. Copy the custom_components/tapo-rv30 folder into your Home Assistant config/custom_components/ directory, so you end up with config/custom_components/tapo-rv30/.
+2. Restart Home Assistant.
 
 ## Supported Models
 
