@@ -44,7 +44,7 @@ class _TapoSelectBase(CoordinatorEntity[TapoCoordinator], SelectEntity):
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name":        self.coordinator.device_name,
             "manufacturer":"TP-Link",
-            "model":       "Tapo RV30 Max Plus",
+            "model":       self.coordinator.device_model,
         }
 
 

@@ -6,6 +6,22 @@ CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_PORT     = "port"
 DEFAULT_PORT  = 4433
+CONF_TRANSPORT = "transport"
+TRANSPORT_TPAP = "tpap"
+TRANSPORT_AES  = "aes"
+
+# Feature ids already covered by hand-written entities elsewhere (vacuum.py,
+# select.py, sensor.py's fixed descriptions) — excluded from the generic
+# Feature-registry sweep in sensor.py/binary_sensor.py/switch.py/number.py/
+# button.py so we don't create a duplicate entity for the same data.
+EXCLUDE_FEATURE_IDS = {
+    "battery_level", "vacuum_status", "vacuum_error", "clean_area",
+    "clean_count", "vacuum_fan_speed", "mop_waterlevel",
+    "vacuum_start", "vacuum_pause", "vacuum_return_home",
+    "main_brush_remaining", "side_brush_remaining", "filter_remaining",
+    "sensor_remaining", "charging_contacts_remaining",
+}
+
 
 FAST_INTERVAL = 30   # seconds — status / battery / attrs
 MAP_INTERVAL  = 300  # seconds — map image re-render

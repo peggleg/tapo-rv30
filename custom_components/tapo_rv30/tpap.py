@@ -361,6 +361,10 @@ class TapoVacuumClient:
         except Exception:
             return raw or "Tapo RV30"
 
+    def get_model(self) -> str:
+        model = self.send("getDeviceInfo")["result"].get("model", "")
+        return f"Tapo {model}".strip() if model else "Tapo RV30"
+
     def get_consumables(self) -> dict:
         return self.send("getConsumablesInfo")["result"]
 
@@ -370,6 +374,17 @@ class TapoVacuumClient:
 
     def get_map_data(self, map_id: int) -> dict:
         return self.send("getMapData", {"map_id": map_id})["result"]
+
+    def get_schedules(self) -> list[dict]:
+        """Mirrors aes_client.AesVacuumClient.get_schedules() for interface
+        parity. get_schedule_rules is confirmed correct on an AES-transport
+        RV30C Mop but hasn't been tested against TPAP-transport hardware —
+        the underlying device-side API is very likely identical either way
+        since it's the same vacuum firmware surface, just reached through a
+        different login/encryption layer, but flagging the untested status
+        explicitly rather than presenting it as verified."""
+        r = self.send("get_schedule_rules", {"start_index": 0})
+        return (r or {}).get("result", {}).get("rule_list", [])
 
     def start(self) -> None:
         self.send("setSwitchClean", {

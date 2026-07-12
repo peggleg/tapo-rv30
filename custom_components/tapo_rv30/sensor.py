@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -22,13 +23,20 @@ from .const import (
     CONSUMABLE_LIMITS_H,
     DOMAIN,
     ERROR_CODES,
+    EXCLUDE_FEATURE_IDS,
     VACUUM_STATES,
     WATER_INT_TO_NAME,
     FAN_INT_TO_NAME,
 )
-from .coordinator import TapoCoordinator
+from .coordinator import TapoCoordinator, _b64name
 
 _LOGGER = logging.getLogger(__name__)
+
+_FEATURE_CATEGORY_MAP = {
+    "Config": EntityCategory.CONFIG,
+    "Debug":  EntityCategory.DIAGNOSTIC,
+    "Info":   EntityCategory.DIAGNOSTIC,
+}
 
 
 @dataclass(frozen=True)
@@ -104,12 +112,18 @@ async def async_setup_entry(
         TapoStatusSensor(coordinator, entry, _BATTERY_SENSOR),
         TapoStatusSensor(coordinator, entry, _ERROR_SENSOR),
         TapoStatusSensor(coordinator, entry, _AREA_SENSOR),
+        TapoRoomsSensor(coordinator, entry),
+        TapoSchedulesSensor(coordinator, entry),
     ]
 
     for ckey, clabel in CONSUMABLE_LABELS.items():
         entities.append(
             TapoConsumableSensor(coordinator, entry, ckey, clabel)
         )
+
+    for desc in coordinator.feature_descriptors:
+        if desc["type"] == "Sensor" and desc["id"] not in EXCLUDE_FEATURE_IDS:
+            entities.append(TapoFeatureSensor(coordinator, entry, desc))
 
     async_add_entities(entities)
 
@@ -129,7 +143,7 @@ class TapoStatusSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name":        self.coordinator.device_name,
             "manufacturer":"TP-Link",
-            "model":       "Tapo RV30 Max Plus",
+            "model":       self.coordinator.device_model,
         }
 
     @property
@@ -138,6 +152,120 @@ class TapoStatusSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
         if d is None:
             return None
         return self.entity_description.value_fn(d)
+
+
+class TapoRoomsSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
+    """Lists the rooms found on the current map.
+
+    State is a comma-separated list of room names (what you actually
+    want to see at a glance in the entity list); extra_state_attributes
+    carries the same data structured for templates/scripts — a plain
+    list, and an id→name mapping to help construct clean_rooms calls.
+    """
+    _attr_has_entity_name = True
+    _attr_name             = "Rooms"
+    _attr_icon             = "mdi:floor-plan"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_rooms"
+        self._entry           = entry
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name":        self.coordinator.device_name,
+            "manufacturer":"TP-Link",
+            "model":       self.coordinator.device_model,
+        }
+
+    @property
+    def native_value(self) -> str:
+        rooms = sorted(self.coordinator.rooms, key=lambda r: r.get("id", 0))
+        names = [_b64name(r.get("name", "")) for r in rooms]
+        state = ", ".join(names)
+        # HA logs a warning and truncates display for states over 255 chars —
+        # keep well under that even with many/long room names.
+        return state[:252] + "…" if len(state) > 255 else state
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        rooms = sorted(self.coordinator.rooms, key=lambda r: r.get("id", 0))
+        names = [_b64name(r.get("name", "")) for r in rooms]
+        return {
+            "room_names": names,
+            "room_count": len(rooms),
+            "rooms": {r.get("id"): _b64name(r.get("name", "")) for r in rooms},
+            "map_id": self.coordinator.map_id,
+        }
+
+
+class TapoFeatureSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
+    """Generic sensor for any python-kasa Feature of type Sensor that
+    isn't already covered by a hand-written entity — this is how new
+    diagnostic values (consumable 'used' hours, cleaning progress/time,
+    wifi signal, device time, etc) show up automatically without needing
+    a bespoke class per field. AES transport only; empty on TPAP.
+    """
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, entry, desc: dict) -> None:
+        super().__init__(coordinator)
+        self._fid              = desc["id"]
+        self._attr_name        = desc["name"]
+        self._attr_unique_id   = f"{entry.entry_id}_feat_{desc['id']}"
+        if desc.get("icon"):
+            self._attr_icon = desc["icon"]
+        if desc.get("unit"):
+            self._attr_native_unit_of_measurement = desc["unit"]
+        self._attr_entity_category = _FEATURE_CATEGORY_MAP.get(desc.get("category"))
+        self._entry = entry
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name":        self.coordinator.device_name,
+            "manufacturer":"TP-Link",
+            "model":       self.coordinator.device_model,
+        }
+
+    @property
+    def native_value(self) -> Any:
+        return self.coordinator.features.get(self._fid)
+
+
+class TapoSchedulesSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
+    """Shows the vacuum's saved schedules (as configured in the Tapo app)
+    decoded into something readable — time, repeat days, room order, and
+    settings — pulled straight from the device via get_schedule_rules.
+    """
+    _attr_has_entity_name = True
+    _attr_name             = "Schedules"
+    _attr_icon             = "mdi:calendar-clock"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_schedules"
+        self._entry           = entry
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name":        self.coordinator.device_name,
+            "manufacturer":"TP-Link",
+            "model":       self.coordinator.device_model,
+        }
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.schedules)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"schedules": self.coordinator.schedules}
 
 
 class TapoConsumableSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
@@ -161,7 +289,7 @@ class TapoConsumableSensor(CoordinatorEntity[TapoCoordinator], SensorEntity):
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name":        self.coordinator.device_name,
             "manufacturer":"TP-Link",
-            "model":       "Tapo RV30 Max Plus",
+            "model":       self.coordinator.device_model,
         }
 
     @property

@@ -63,7 +63,7 @@ class TapoVacuumEntity(CoordinatorEntity[TapoCoordinator], StateVacuumEntity):
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name":        self.coordinator.device_name,
             "manufacturer":"TP-Link",
-            "model":       "Tapo RV30 Max Plus",
+            "model":       self.coordinator.device_model,
         }
 
     @property
@@ -72,11 +72,6 @@ class TapoVacuumEntity(CoordinatorEntity[TapoCoordinator], StateVacuumEntity):
         if d is None:
             return None
         return VACUUM_STATES.get(d.get("status_code", 0), "idle")
-
-    @property
-    def battery_level(self) -> int | None:
-        d = self.coordinator.data
-        return d.get("battery") if d else None
 
     @property
     def fan_speed(self) -> str | None:
