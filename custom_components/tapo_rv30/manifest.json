@@ -1,7 +1,7 @@
 {
   "domain": "tapo_rv30",
   "name": "Tapo RV30 Robot Vacuum",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "documentation": "https://github.com/peggleg/tapo-rv30",
   "issue_tracker": "https://github.com/peggleg/tapo-rv30/issues",
   "requirements": ["requests>=2.28", "ecdsa>=0.18", "Pillow>=10.0", "python-kasa>=0.10.0"],
