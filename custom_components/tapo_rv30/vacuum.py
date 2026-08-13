@@ -31,10 +31,14 @@ _FEATURES = (
     | VacuumEntityFeature.STOP
     | VacuumEntityFeature.RETURN_HOME
     | VacuumEntityFeature.FAN_SPEED
-    | VacuumEntityFeature.BATTERY
     | VacuumEntityFeature.STATE
     | VacuumEntityFeature.MAP
 )
+# NOTE: VacuumEntityFeature.BATTERY (and the battery_level/battery_icon
+# entity properties) were deprecated in HA Core 2025.8 and are removed in
+# 2026.8 — https://developers.home-assistant.io/blog/2025/07/02/vacuum-battery-properties-deprecated/
+# Battery is reported instead via the dedicated SensorDeviceClass.BATTERY
+# entity in sensor.py (_BATTERY_SENSOR), which is the supported pattern.
 
 
 async def async_setup_entry(
