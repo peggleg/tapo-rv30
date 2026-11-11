@@ -95,8 +95,10 @@ class TapoVacuumEntity(CoordinatorEntity[TapoCoordinator], StateVacuumEntity):
             "clean_area":    d.get("clean_area", 0),
             "clean_time_min":d.get("clean_time", 0),
             "clean_percent": d.get("clean_percent", 0),
-            "rooms":         rooms,
-            "integration":   DOMAIN,
+            "rooms":           rooms,
+            "vacuum_position": self.coordinator.vacuum_coordinates,
+            "dock_position":   self.coordinator.dock_coordinates,
+            "integration":     DOMAIN,
         }
 
     async def async_start(self) -> None:

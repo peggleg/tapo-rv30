@@ -13,11 +13,21 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 from .aes_client import AesVacuumClient
 from .aes_client import AuthError as AesAuthError
-from .const import CONF_TRANSPORT, DEFAULT_PORT, DOMAIN, TRANSPORT_AES, TRANSPORT_TPAP
+from .const import (
+    CONF_CLEANING_INTERVAL,
+    CONF_IDLE_INTERVAL,
+    CONF_TRANSPORT,
+    DEFAULT_CLEANING_INTERVAL,
+    DEFAULT_IDLE_INTERVAL,
+    DEFAULT_PORT,
+    DOMAIN,
+    TRANSPORT_AES,
+    TRANSPORT_TPAP,
+)
 from .tpap import AuthError as TpapAuthError
 from .tpap import TapoVacuumClient
 
@@ -93,3 +103,33 @@ class TapoRV30ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=STEP_SCHEMA,
             errors=errors,
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        return TapoRV30OptionsFlowHandler()
+
+
+class TapoRV30OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options for Tapo RV30."""
+
+    async def async_step_init(self, user_input=None):
+        """Manage update intervals."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self.config_entry.options
+        schema = vol.Schema({
+            vol.Optional(
+                CONF_CLEANING_INTERVAL,
+                default=options.get(CONF_CLEANING_INTERVAL, DEFAULT_CLEANING_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=2, max=120)),
+            vol.Optional(
+                CONF_IDLE_INTERVAL,
+                default=options.get(CONF_IDLE_INTERVAL, DEFAULT_IDLE_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=10, max=300)),
+        })
+
+        return self.async_show_form(step_id="init", data_schema=schema)

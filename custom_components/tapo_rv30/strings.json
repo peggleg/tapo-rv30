@@ -17,5 +17,24 @@
     "abort": {
       "already_configured": "This device is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tapo RV30 Settings",
+        "description": "Configure update intervals for vacuum tracking and status.",
+        "data": {
+          "cleaning_interval": "Vacuum Position Update Interval (seconds)",
+          "idle_interval": "Status Update Interval While Idle (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "vacuum_position_update_interval": {
+        "name": "Vacuum Position Update Interval"
+      }
+    }
   }
 }

@@ -1,6 +1,7 @@
 """Tapo RV30 Robot Vacuum integration."""
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -8,7 +9,17 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platfor
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .aes_client import AesVacuumClient
-from .const import CONF_TRANSPORT, DEFAULT_PORT, DOMAIN, TRANSPORT_AES, TRANSPORT_TPAP
+from .const import (
+    CONF_CLEANING_INTERVAL,
+    CONF_IDLE_INTERVAL,
+    CONF_TRANSPORT,
+    DEFAULT_CLEANING_INTERVAL,
+    DEFAULT_IDLE_INTERVAL,
+    DEFAULT_PORT,
+    DOMAIN,
+    TRANSPORT_AES,
+    TRANSPORT_TPAP,
+)
 from .coordinator import TapoCoordinator
 from .tpap import TapoVacuumClient
 
@@ -40,11 +51,13 @@ def _build_client(entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = _build_client(entry)
-    coordinator = TapoCoordinator(hass, client)
+    coordinator = TapoCoordinator(hass, client, entry)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     async def handle_clean_rooms(call: ServiceCall) -> None:
         """Service: tapo_rv30.clean_rooms."""
@@ -95,3 +108,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         hass.services.async_remove(DOMAIN, "clean_rooms")
     return ok
+
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update without full integration reload."""
+    coordinator: TapoCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator:
+        coordinator.cleaning_interval = entry.options.get(
+            CONF_CLEANING_INTERVAL, DEFAULT_CLEANING_INTERVAL
+        )
+        coordinator.idle_interval = entry.options.get(
+            CONF_IDLE_INTERVAL, DEFAULT_IDLE_INTERVAL
+        )
+        is_active = (
+            coordinator.data is not None
+            and coordinator.data.get("status_code") in (1, 2, 4)
+        )
+        sec = coordinator.cleaning_interval if is_active else coordinator.idle_interval
+        coordinator.update_interval = timedelta(seconds=sec)

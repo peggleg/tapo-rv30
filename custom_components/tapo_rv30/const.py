@@ -26,6 +26,12 @@ EXCLUDE_FEATURE_IDS = {
 FAST_INTERVAL = 30   # seconds — status / battery / attrs
 MAP_INTERVAL  = 300  # seconds — map image re-render
 
+CONF_CLEANING_INTERVAL = "cleaning_interval"
+CONF_IDLE_INTERVAL     = "idle_interval"
+
+DEFAULT_CLEANING_INTERVAL = 10  # seconds — position update interval while cleaning
+DEFAULT_IDLE_INTERVAL     = 30  # seconds — status update interval while idle
+
 VACUUM_STATES = {
     0:   "idle",
     1:   "cleaning",
@@ -74,16 +80,17 @@ CONSUMABLE_LABELS = {
     "charge_contact_time": "Charge Contacts",
 }
 
-# Pastel room colours (R, G, B) — one per room slot
+# Modern, refined room colours (R, G, B) — high contrast, clean app aesthetic
 ROOM_PALETTE = [
-    (255, 179, 186),  # pastel red
-    (186, 225, 255),  # pastel blue
-    (186, 255, 201),  # pastel green
-    (255, 255, 186),  # pastel yellow
-    (220, 186, 255),  # pastel purple
-    (255, 220, 186),  # pastel orange
-    (186, 255, 255),  # pastel cyan
+    (180, 215, 248),  # soft sky blue
+    (188, 228, 202),  # sage green
+    (252, 238, 178),  # warm butter yellow
+    (218, 198, 245),  # soft lavender
+    (252, 206, 188),  # soft peach
+    (178, 232, 232),  # soft teal
+    (250, 192, 204),  # soft blush rose
+    (210, 230, 214),  # pale mint
 ]
-WALL_COLOR    = (60,  60,  60)
-UNKNOWN_COLOR = (210, 210, 210)
-FLOOR_COLOR   = (240, 240, 240)
+WALL_COLOR    = (44,  48,  56)     # crisp architectural slate wall
+UNKNOWN_COLOR = (236, 239, 243)    # clean off-white / light canvas
+FLOOR_COLOR   = (250, 252, 255)    # bright clean floor

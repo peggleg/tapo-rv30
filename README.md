@@ -11,6 +11,13 @@ With help from Claude the RV30C Mop is now supported using the **AES** authentic
 
 - Full vacuum control — start, pause, stop, dock
 - **Room-by-room cleaning** via `tapo_rv30.clean_rooms` service
+- **Live Map Camera Entity**:
+  - Crisp room labels rendered using a bundled TrueType vector font across all platforms.
+  - Charging dock station glyph and vacuum puck with **directional heading arrow** indicating travel direction.
+  - **Live cleaning trail**: tracks and renders a translucent path behind the vacuum showing where it has cleaned during the current run.
+- **Configurable Position Tracking Rate**:
+  - Dynamic polling: automatically switches to high frequency while cleaning/moving and throttles back while docked/idle to save network traffic.
+  - **Number entity slider** (`number.<name>_vacuum_position_update_interval`): adjust the live tracking rate from 2s to 120s directly from your dashboard or device page.
 - Fan speed selection (Quiet / Standard / Turbo / Max / Ultra)
 - Water level select (Off / Low / Medium / High)
 - Clean passes select (1 / 2 / 3)
@@ -19,7 +26,7 @@ With help from Claude the RV30C Mop is now supported using the **AES** authentic
 - Consumable wear sensors (main brush, side brush, filter, sensor, charge contacts)
 - Config flow UI — set up from Settings → Devices & Services
 - Schedules imported from Tapo App
-- Check for firmware uptes
+- Check for firmware updates
 - Reset consumables (main brush, side brush, filter, sensor, charge contacts)
 
 ## Requirements
