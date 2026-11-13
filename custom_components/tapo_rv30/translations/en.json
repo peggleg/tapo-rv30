@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Tapo RV30",
+        "data": {
+          "host": "Host (IP address)",
+          "username": "Tapo account email",
+          "password": "Tapo account password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect — check the IP address and that the vacuum is on",
+      "invalid_auth": "Invalid credentials — check your Tapo email and password"
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tapo RV30 Settings",
+        "description": "Configure update intervals for vacuum tracking and status.",
+        "data": {
+          "cleaning_interval": "Vacuum Position Update Interval (seconds)",
+          "idle_interval": "Status Update Interval While Idle (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "vacuum_position_update_interval": {
+        "name": "Vacuum Position Update Interval"
+      }
+    }
+  }
+}

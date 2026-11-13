@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
+
 from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -45,6 +47,14 @@ class TapoMapCamera(CoordinatorEntity[TapoCoordinator], Camera):
             "name":        self.coordinator.device_name,
             "manufacturer":"TP-Link",
             "model":       self.coordinator.device_model,
+        }
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "vacuum_coordinates": self.coordinator.vacuum_coordinates,
+            "dock_coordinates":   self.coordinator.dock_coordinates,
+            "map_id":             self.coordinator.map_id,
         }
 
     async def async_camera_image(

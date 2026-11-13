@@ -2,15 +2,23 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
+import math
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .const import (
+    CONF_CLEANING_INTERVAL,
+    CONF_IDLE_INTERVAL,
+    DEFAULT_CLEANING_INTERVAL,
+    DEFAULT_IDLE_INTERVAL,
     DOMAIN,
     FAST_INTERVAL,
     MAP_INTERVAL,
@@ -25,6 +33,10 @@ _LOGGER = logging.getLogger(__name__)
 
 MAP_SCALE   = 6   # px per vacuum grid cell in the final image
 SUPERSAMPLE = 3   # render at MAP_SCALE*SUPERSAMPLE then downscale for anti-aliasing
+FONT_SIZE   = 20
+BLUR_RADIUS = 2.4  # smooths grid-cell boundary into soft curves
+
+FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 
 
 def _lz4_block_decompress(data: bytes, uncompressed_size: int) -> bytes:
@@ -62,9 +74,6 @@ def _lz4_block_decompress(data: bytes, uncompressed_size: int) -> bytes:
             out[dst + i] = out[match_pos + i]
         dst += match_len
     return bytes(out)
-FONT_SIZE   = 22
-BLUR_RADIUS = 2.6  # applied at render_scale, before downsampling — smooths the
-                    # grid-cell "staircase" on room boundaries into soft curves
 
 
 def _b64name(s: str) -> str:
@@ -107,21 +116,12 @@ def _decode_schedule(rule: dict, room_names: dict[int, str]) -> dict:
     }
 
 
-def _render_map_image(map_data: dict) -> bytes:
-    """Decode LZ4 pixel data and produce a lossless PNG image as bytes.
+def _render_base_map_image(map_data: dict) -> tuple[Image.Image, int, int]:
+    """Decode LZ4 pixel data and render a clean, high-contrast base map
+    (soft blurred room fills, solid architectural walls, TrueType room labels,
+    and charging dock glyph) downsampled with Lanczos anti-aliasing.
 
-    Two-pass render:
-      1. Room/wall/floor fills are drawn on their own layer at
-         MAP_SCALE * SUPERSAMPLE resolution, then Gaussian-blurred. This
-         is what actually smooths the blocky "staircase" look — the
-         staircase comes from the source grid's own resolution, not
-         from pixel-scaling artifacts, so scaling up or resizing alone
-         (the old approach) can't fix it; only blurring the boundary
-         can, since it's a real low-res boundary, not an aliasing
-         artifact.
-      2. Room labels and dock/vacuum markers are drawn crisp on top of
-         the blurred base, then the whole composite is downsampled with
-         LANCZOS for final anti-aliasing.
+    Returns (base_image, width, height).
     """
     width   = map_data["width"]
     height  = map_data["height"]
@@ -135,24 +135,28 @@ def _render_map_image(map_data: dict) -> bytes:
     room_colors = {rid: ROOM_PALETTE[i % len(ROOM_PALETTE)]
                    for i, rid in enumerate(sorted_ids)}
 
-    # Build colour lookup table (0-255)
-    lut: list[tuple[int, int, int]] = [UNKNOWN_COLOR] * 256
-    lut[0]   = WALL_COLOR
-    lut[127] = UNKNOWN_COLOR
-    lut[255] = FLOOR_COLOR
+    # Build colour lookup table (0-255).
+    # In Pass 1 (floor/room blur pass), walls are filled with FLOOR_COLOR so
+    # the room boundaries smooth naturally without bleeding dark wall pixels into the rooms.
+    lut_fill: list[tuple[int, int, int]] = [UNKNOWN_COLOR] * 256
+    lut_fill[0]   = FLOOR_COLOR
+    lut_fill[127] = UNKNOWN_COLOR
+    lut_fill[255] = FLOOR_COLOR
     for rid, color in room_colors.items():
         if 0 <= rid <= 255:
-            lut[rid] = color
+            lut_fill[rid] = color
 
     render_scale = MAP_SCALE * SUPERSAMPLE
 
-    # --- Pass 1: base fill layer, blurred to smooth cell-boundary edges ---
-    base = Image.new("RGB", (width * render_scale, height * render_scale))
+    # --- Pass 1: soft room and floor fills ---
+    base = Image.new("RGB", (width * render_scale, height * render_scale), UNKNOWN_COLOR)
     bdraw = ImageDraw.Draw(base)
     for row in range(height - 1, -1, -1):
         for col in range(width):
-            pv    = pixels[row * width + col]
-            color = lut[pv] if pv < 256 else UNKNOWN_COLOR
+            pv = pixels[row * width + col]
+            if pv == 127:
+                continue  # leave background untouched
+            color = lut_fill[pv] if pv < 256 else UNKNOWN_COLOR
             screen_row = (height - 1 - row) * render_scale
             screen_col = col * render_scale
             bdraw.rectangle(
@@ -162,15 +166,29 @@ def _render_map_image(map_data: dict) -> bytes:
             )
     base = base.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS * SUPERSAMPLE))
 
-    # --- Pass 2: crisp labels + markers on top of the blurred base ---
-    img  = base
-    draw = ImageDraw.Draw(img)
+    # --- Pass 2: sharp, solid architectural walls on top of blurred fills ---
+    wdraw = ImageDraw.Draw(base)
+    for row in range(height - 1, -1, -1):
+        for col in range(width):
+            pv = pixels[row * width + col]
+            if pv == 0:  # wall / obstacle
+                screen_row = (height - 1 - row) * render_scale
+                screen_col = col * render_scale
+                wdraw.rectangle(
+                    [screen_col, screen_row,
+                     screen_col + render_scale - 1, screen_row + render_scale - 1],
+                    fill=WALL_COLOR,
+                )
 
+    # --- Pass 3: crisp room badges using bundled TrueType font ---
     try:
-        font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            FONT_SIZE * SUPERSAMPLE,
-        )
+        if FONT_PATH.exists():
+            font = ImageFont.truetype(str(FONT_PATH), FONT_SIZE * SUPERSAMPLE)
+        else:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                FONT_SIZE * SUPERSAMPLE,
+            )
     except Exception:
         font = ImageFont.load_default()
 
@@ -181,7 +199,7 @@ def _render_map_image(map_data: dict) -> bytes:
         name = _b64name(room.get("name", ""))
         if not name:
             continue
-        # Find centroid of all pixels belonging to this room
+        # Centroid of room pixels
         xs, ys = [], []
         for row in range(height):
             for col in range(width):
@@ -193,62 +211,164 @@ def _render_map_image(map_data: dict) -> bytes:
         cx = int(sum(xs) / len(xs)) * render_scale + render_scale // 2
         cy = int((height - 1 - (sum(ys) / len(ys)))) * render_scale + render_scale // 2
 
-        # Solid contrast backdrop behind the label — pastel room fills make
-        # plain white/shadow text hard to read at a glance, especially once
-        # downsampled, so this guarantees legibility regardless of room color.
-        bbox = draw.textbbox((cx, cy), name, font=font, anchor="mm")
-        pad = 6 * SUPERSAMPLE
-        draw.rounded_rectangle(
+        # High-contrast modern badge pill
+        bbox = wdraw.textbbox((cx, cy), name, font=font, anchor="mm")
+        pad = 8 * SUPERSAMPLE
+        wdraw.rounded_rectangle(
             [bbox[0] - pad, bbox[1] - pad // 2, bbox[2] + pad, bbox[3] + pad // 2],
             radius=6 * SUPERSAMPLE,
-            fill=(30, 30, 30),
+            fill=(36, 40, 48),
+            outline=(85, 92, 105),
+            width=SUPERSAMPLE,
         )
-        draw.text((cx, cy), name, fill=(255, 255, 255), font=font, anchor="mm")
+        wdraw.text((cx, cy), name, fill=(255, 255, 255), font=font, anchor="mm")
 
-    # Charger and vacuum markers
+    # --- Pass 4: charging station dock glyph ---
     charge = map_data.get("charge_coor")
-    vac    = map_data.get("vac_coor")
-
-    def _dot(gx, gy, color, radius=7 * SUPERSAMPLE):
+    if charge:
+        gx, gy = charge[0], charge[1]
         sx = gx * render_scale + render_scale // 2
         sy = (height - 1 - gy) * render_scale + render_scale // 2
-        draw.ellipse([sx - radius, sy - radius, sx + radius, sy + radius],
-                     fill=color, outline=(255, 255, 255), width=2 * SUPERSAMPLE)
+        r = 8 * SUPERSAMPLE
+        # Dock station base
+        wdraw.rounded_rectangle(
+            [sx - r, sy - r, sx + r, sy + r],
+            radius=3 * SUPERSAMPLE,
+            fill=(42, 46, 54),
+            outline=(255, 255, 255),
+            width=2 * SUPERSAMPLE,
+        )
+        # Metallic charging contacts
+        pin_h = 4 * SUPERSAMPLE
+        wdraw.rectangle(
+            [sx - 4 * SUPERSAMPLE, sy - pin_h, sx - 2 * SUPERSAMPLE, sy + pin_h],
+            fill=(255, 190, 0),
+        )
+        wdraw.rectangle(
+            [sx + 2 * SUPERSAMPLE, sy - pin_h, sx + 4 * SUPERSAMPLE, sy + pin_h],
+            fill=(255, 190, 0),
+        )
 
-    if charge:
-        _dot(charge[0], charge[1], (255, 200, 0))   # amber = dock
-    if vac:
-        _dot(vac[0], vac[1], (0, 180, 255))          # cyan = vacuum
-
-    # Downsample from the supersampled render for final anti-aliasing
+    # Downsample from supersampled render with Lanczos for final anti-aliasing
     final_size = (width * MAP_SCALE, height * MAP_SCALE)
-    img = img.resize(final_size, Image.LANCZOS)
+    final_base = base.resize(final_size, Image.LANCZOS)
+    return final_base, width, height
 
-    import io
+
+def _composite_vacuum_map(
+    base_img: Image.Image,
+    vac_coor: list[int] | tuple[int, int] | None,
+    height: int,
+    cleaning_path: list[tuple[int, int]] | None = None,
+) -> bytes:
+    """Draw cleaning trail and vector robot marker with heading onto base map."""
+    img = base_img.copy().convert("RGBA")
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # 1. Cleaning trail line
+    if cleaning_path and len(cleaning_path) >= 2:
+        pts = [
+            (
+                x * MAP_SCALE + MAP_SCALE // 2,
+                (height - 1 - y) * MAP_SCALE + MAP_SCALE // 2,
+            )
+            for x, y in cleaning_path
+        ]
+        draw.line(pts, fill=(0, 160, 240, 180), width=2, joint="curve")
+
+    # 2. Modern robot vacuum puck
+    if vac_coor:
+        gx, gy = vac_coor[0], vac_coor[1]
+        sx = gx * MAP_SCALE + MAP_SCALE // 2
+        sy = (height - 1 - gy) * MAP_SCALE + MAP_SCALE // 2
+
+        # Drop shadow
+        draw.ellipse([sx - 10, sy - 9, sx + 10, sy + 11], fill=(0, 0, 0, 70))
+        # Outer robot body
+        draw.ellipse(
+            [sx - 9, sy - 9, sx + 9, sy + 9],
+            fill=(255, 255, 255, 255),
+            outline=(45, 50, 60, 255),
+            width=2,
+        )
+        # Center LiDAR turret dome
+        draw.ellipse(
+            [sx - 4, sy - 4, sx + 4, sy + 4],
+            fill=(0, 170, 255, 255),
+        )
+
+        # Directional heading wedge / arrow
+        if cleaning_path and len(cleaning_path) >= 2:
+            px, py = cleaning_path[-2]
+            dx = gx - px
+            dy = -(gy - py)  # Inverted Y screen coords
+            if dx != 0 or dy != 0:
+                angle = math.atan2(dy, dx)
+                tip = (sx + int(12 * math.cos(angle)), sy + int(12 * math.sin(angle)))
+                l_wing = (
+                    sx + int(7 * math.cos(angle + 2.5)),
+                    sy + int(7 * math.sin(angle + 2.5)),
+                )
+                r_wing = (
+                    sx + int(7 * math.cos(angle - 2.5)),
+                    sy + int(7 * math.sin(angle - 2.5)),
+                )
+                draw.polygon([tip, l_wing, r_wing], fill=(0, 170, 255, 255))
+
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()
 
 
-class TapoCoordinator(DataUpdateCoordinator):
-    """Polls Jarvis for status + periodically re-renders map."""
+def _render_map_image(map_data: dict) -> bytes:
+    """Backward-compatible one-shot render of base map + vacuum marker."""
+    base_img, _, height = _render_base_map_image(map_data)
+    return _composite_vacuum_map(base_img, map_data.get("vac_coor"), height, [])
 
-    def __init__(self, hass: HomeAssistant, client: TapoVacuumClient) -> None:
+
+class TapoCoordinator(DataUpdateCoordinator):
+    """Polls vacuum for status + periodically re-renders map."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: TapoVacuumClient,
+        entry: ConfigEntry | None = None,
+    ) -> None:
+        self.entry = entry
+        self.cleaning_interval = (
+            entry.options.get(CONF_CLEANING_INTERVAL, DEFAULT_CLEANING_INTERVAL)
+            if entry else DEFAULT_CLEANING_INTERVAL
+        )
+        self.idle_interval = (
+            entry.options.get(CONF_IDLE_INTERVAL, DEFAULT_IDLE_INTERVAL)
+            if entry else DEFAULT_IDLE_INTERVAL
+        )
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=FAST_INTERVAL),
+            update_interval=timedelta(seconds=self.idle_interval),
         )
         self.client          = client
         self._map_tick       = 0      # counts update cycles; refresh map every N
-        self._map_cycles     = MAP_INTERVAL // FAST_INTERVAL
+        self._map_cycles     = max(1, MAP_INTERVAL // self.idle_interval)
         self.map_image_bytes: bytes | None = None
         self.rooms:  list[dict] = []   # current rooms (area_list, type==room)
         self.map_id: int | None = None # current map_id
         self.device_name:  str = "Tapo RV30"
         self.device_model: str = "Tapo RV30"
         self._name_fetched = False
+
+        # Live coordinates & cached base map
+        self.vacuum_coordinates: list[int] | None = None
+        self.dock_coordinates: list[int] | None = None
+        self.cleaning_path: list[tuple[int, int]] = []
+        self._last_clean_time: int = 0
+        self._cached_base_img: Image.Image | None = None
+        self._cached_base_key: tuple | None = None
+        self._cached_height: int = 0
+        self._was_active: bool = False
 
         # Generic Feature-registry data (AES transport only — stays empty,
         # harmlessly, for TPAP-transport clients that don't implement it).
@@ -297,15 +417,52 @@ class TapoCoordinator(DataUpdateCoordinator):
             except Exception as exc:
                 _LOGGER.debug("Feature value refresh failed: %s", exc)
 
-        # Refresh map on first load and every MAP_INTERVAL seconds
+        is_active = data.get("status_code") in (1, 2, 4)
+
+        # Reset cleaning path trail when a new cleaning run starts
+        clean_time = data.get("clean_time", 0)
+        if is_active and (clean_time < self._last_clean_time or (not self._was_active and is_active)):
+            self.cleaning_path.clear()
+        self._last_clean_time = clean_time
+
+        # Dynamic update interval based on activity:
+        # High frequency while cleaning/moving (10s by default),
+        # standard frequency while idle/docked (30s by default).
+        target_seconds = self.cleaning_interval if is_active else self.idle_interval
+        target_interval = timedelta(seconds=target_seconds)
+        if self.update_interval != target_interval:
+            self.update_interval = target_interval
+            self._map_cycles = max(1, MAP_INTERVAL // target_seconds)
+            _LOGGER.debug(
+                "Switched polling interval to %ds (cleaning=%s)",
+                target_seconds, is_active,
+            )
+
         self._map_tick += 1
-        if self.map_image_bytes is None or self._map_tick >= self._map_cycles:
-            self._map_tick = 0
+        needs_full_map = self._map_tick >= self._map_cycles
+        was_active = self._was_active
+        self._was_active = is_active
+
+        # Refresh map:
+        # - on first load
+        # - on EVERY cycle while active/cleaning so position stays accurate
+        # - when transitioning from active -> idle (docked or stopped)
+        # - periodically when idle (every MAP_INTERVAL seconds)
+        if (
+            self.map_image_bytes is None
+            or is_active
+            or (was_active and not is_active)
+            or needs_full_map
+        ):
+            force_base = needs_full_map or (self.map_image_bytes is None)
+            if force_base:
+                self._map_tick = 0
             try:
-                await self.hass.async_add_executor_job(self._refresh_map)
+                await self.hass.async_add_executor_job(self._refresh_map, force_base)
             except Exception as exc:
                 _LOGGER.warning("Map refresh failed: %s", exc)
-            if hasattr(self.client, "get_schedules"):
+
+            if hasattr(self.client, "get_schedules") and (needs_full_map or not self.schedules):
                 try:
                     await self.hass.async_add_executor_job(self._refresh_schedules)
                 except Exception as exc:
@@ -313,15 +470,53 @@ class TapoCoordinator(DataUpdateCoordinator):
 
         return data
 
-    def _refresh_map(self) -> None:
+    def _refresh_map(self, force_base_rerender: bool = False) -> None:
         current_id, _ = self.client.get_map_info()
         map_data       = self.client.get_map_data(current_id)
         self.map_id    = current_id
         self.rooms     = [a for a in map_data.get("area_list", [])
                           if a.get("type") == "room"]
-        self.map_image_bytes = _render_map_image(map_data)
-        _LOGGER.debug("Map rendered: %d bytes, %d rooms",
-                      len(self.map_image_bytes), len(self.rooms))
+        self.dock_coordinates   = map_data.get("charge_coor")
+        self.vacuum_coordinates = map_data.get("vac_coor")
+
+        # Cache base map (room fills, walls, labels, dock) so that frequent
+        # position updates only need to draw the single vacuum marker (<2ms)
+        # instead of repeating full LZ4 decompression + 18x Gaussian blur.
+        base_key = (
+            current_id,
+            tuple(self.dock_coordinates) if self.dock_coordinates else None,
+            map_data.get("pix_len"),
+            len(map_data.get("map_data", "")),
+        )
+        if (
+            force_base_rerender
+            or self._cached_base_img is None
+            or self._cached_base_key != base_key
+        ):
+            base_img, _, height = _render_base_map_image(map_data)
+            self._cached_base_img = base_img
+            self._cached_base_key = base_key
+            self._cached_height = height
+
+        # Track cleaning path points while active
+        is_active = bool(self.data and self.data.get("status_code") in (1, 2, 4))
+        if self.vacuum_coordinates and (is_active or self._was_active):
+            pt = (self.vacuum_coordinates[0], self.vacuum_coordinates[1])
+            if not self.cleaning_path or self.cleaning_path[-1] != pt:
+                self.cleaning_path.append(pt)
+                if len(self.cleaning_path) > 10000:
+                    self.cleaning_path.pop(0)
+
+        self.map_image_bytes = _composite_vacuum_map(
+            self._cached_base_img,
+            self.vacuum_coordinates,
+            self._cached_height,
+            self.cleaning_path,
+        )
+        _LOGGER.debug(
+            "Map updated: %d bytes, vac=%s, path_len=%d",
+            len(self.map_image_bytes), self.vacuum_coordinates, len(self.cleaning_path),
+        )
 
     def _refresh_schedules(self) -> None:
         room_names = {r["id"]: _b64name(r.get("name", "")) for r in self.rooms}
